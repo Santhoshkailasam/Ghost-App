@@ -9,23 +9,19 @@ import {
 } from '@react-native-firebase/messaging';
 import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import { Linking, Platform } from 'react-native';
-
-const handledPushIds = new Set<string>();
+import { NotificationDeduplicationService } from './NotificationDeduplicationService';
 
 export const PushNotificationService = {
   fcmToken: '' as string,
 
-  isPushAlreadyHandled(id?: string | null, title?: string | null, body?: string | null): boolean {
-    if (id && handledPushIds.has(id)) return true;
-    return false;
+  async isPushAlreadyHandled(id?: string | null, title?: string | null, body?: string | null): Promise<boolean> {
+    const key = id || `${title || ''}:::${body || ''}`;
+    return NotificationDeduplicationService.isPushShown(key);
   },
 
-  markPushHandled(id?: string | null, title?: string | null, body?: string | null): void {
-    if (id) handledPushIds.add(id);
-    if (handledPushIds.size > 100) {
-      const first = handledPushIds.values().next().value;
-      if (first) handledPushIds.delete(first);
-    }
+  async markPushHandled(id?: string | null, title?: string | null, body?: string | null): Promise<void> {
+    const key = id || `${title || ''}:::${body || ''}`;
+    await NotificationDeduplicationService.markPushShown(key);
   },
 
   // Initialize native permissions, audio channels, and listeners
@@ -94,7 +90,7 @@ export const PushNotificationService = {
         const title = remoteMessage.notification?.title || (remoteMessage.data?.title as string);
         const body = remoteMessage.notification?.body || (remoteMessage.data?.body as string);
 
-        if (this.isPushAlreadyHandled(pushId, title, body)) return;
+        if (await this.isPushAlreadyHandled(pushId, title, body)) return;
 
         await this.displayNativePush({
           title,
@@ -139,8 +135,8 @@ export const PushNotificationService = {
   }): Promise<void> {
     try {
       const pushId = payload.data?.pushId || payload.data?.id;
-      if (this.isPushAlreadyHandled(pushId, payload.title, payload.body)) return;
-      this.markPushHandled(pushId, payload.title, payload.body);
+      if (await this.isPushAlreadyHandled(pushId, payload.title, payload.body)) return;
+      await this.markPushHandled(pushId, payload.title, payload.body);
 
       const rawTone = payload.soundTone || 'default';
       const BUNDLED_TONES = ['crystal_glass', 'electronic_pulse', 'subtle_pop', 'urgent_alarm', 'custom_notification'];

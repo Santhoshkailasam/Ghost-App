@@ -18,7 +18,7 @@ try {
     const title = remoteMessage.notification?.title || remoteMessage.data?.title;
     const body = remoteMessage.notification?.body || remoteMessage.data?.body;
 
-    if (PushNotificationService.isPushAlreadyHandled(pushId, title, body)) return;
+    if (await PushNotificationService.isPushAlreadyHandled(pushId, title, body)) return;
 
     await PushNotificationService.displayNativePush({
       title,

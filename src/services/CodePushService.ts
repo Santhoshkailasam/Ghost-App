@@ -1,5 +1,6 @@
 // src/services/CodePushService.ts
 import { Platform, Alert, NativeModules } from 'react-native';
+import { NotificationDeduplicationService } from './NotificationDeduplicationService';
 
 const { CodePushNative } = NativeModules;
 declare const require: any;
@@ -34,8 +35,6 @@ export interface UpdateResponse {
 let cachedRemoteConfig: Record<string, any> = {};
 let bootWatchdogPassed = false;
 let bootCrashCount = 0;
-const shownAlertIds = new Set<string>();
-const appSessionStartTime = Date.now();
 
 // 1. Auto-report crashes to CodePush server
 export async function reportCrashToServer(error: { message: string; stack?: string; version?: string }): Promise<void> {
@@ -71,7 +70,7 @@ if (globalScope.ErrorUtils) {
   });
 }
 
-function displayAlertOnce(alert: {
+async function displayAlertOnce(alert: {
   id?: string;
   title?: string;
   message?: string;
@@ -80,21 +79,27 @@ function displayAlertOnce(alert: {
   actionUrl?: string;
   mandatory?: boolean;
   createdAt?: string | number;
-}): void {
+  created_at?: string | number;
+}): Promise<void> {
   if (!alert || !alert.message) return;
-  const id = alert.id || alert.message;
-  if (shownAlertIds.has(id)) return;
+  const id = alert.id || `${alert.title || ''}:::${alert.message}`;
 
-  // Stale alert check: do not show past alerts on app startup
-  if (alert.createdAt) {
-    const alertTime = new Date(alert.createdAt).getTime();
-    if (!isNaN(alertTime) && alertTime < appSessionStartTime - 8000) {
-      shownAlertIds.add(id);
+  // If already shown and persisted on this device, never show again
+  if (await NotificationDeduplicationService.isAlertShown(id)) {
+    return;
+  }
+
+  // Stale alert check: If created before this app session started, silently mark shown
+  const rawTime = alert.createdAt || alert.created_at;
+  if (rawTime) {
+    const alertTime = new Date(rawTime).getTime();
+    if (!isNaN(alertTime) && alertTime < NotificationDeduplicationService.sessionStartTime - 2000) {
+      await NotificationDeduplicationService.markAlertShown(id);
       return;
     }
   }
 
-  shownAlertIds.add(id);
+  await NotificationDeduplicationService.markAlertShown(id);
   Alert.alert(alert.title || 'CodePush Alert', alert.message, [{ text: 'OK' }]);
 }
 
@@ -208,12 +213,13 @@ export const CodePushService = {
 
       // In-App Alert (Only display if freshly broadcast)
       if (data.alertMessage) {
-        displayAlertOnce({
+        await displayAlertOnce({
           id: data.alertId,
           title: data.alertTitle,
           message: data.alertMessage,
           active: true,
-          createdAt: (data as any).alert?.createdAt,
+          createdAt: (data as any).alert?.createdAt || (data as any).alert?.created_at,
+          created_at: (data as any).alert?.created_at || (data as any).alert?.createdAt,
         });
       }
 
@@ -317,14 +323,15 @@ export const CodePushService = {
           const data = await res.json();
           const alert = data.alert;
           if (alert && alert.active && (alert.message || alert.alertMessage)) {
-            displayAlertOnce({
+            await displayAlertOnce({
               id: alert.id,
               title: alert.title || alert.alertTitle || 'CodePush Alert',
               message: alert.message || alert.alertMessage,
               actionLabel: alert.actionLabel,
               actionUrl: alert.actionUrl,
               mandatory: alert.mandatory,
-              createdAt: alert.createdAt,
+              createdAt: alert.createdAt || alert.created_at,
+              created_at: alert.created_at || alert.createdAt,
             });
             return;
           }
@@ -341,9 +348,9 @@ export const CodePushService = {
         });
         if (res.ok) {
           const data = await res.json();
-          const alert = data.alert || (data.alertMessage ? { id: data.alertId, title: data.alertTitle, message: data.alertMessage, active: true, createdAt: (data as any).alert?.createdAt } : null);
+          const alert = data.alert || (data.alertMessage ? { id: data.alertId, title: data.alertTitle, message: data.alertMessage, active: true, createdAt: (data as any).alert?.createdAt, created_at: (data as any).alert?.created_at } : null);
           if (alert && alert.active && alert.message) {
-            displayAlertOnce(alert);
+            await displayAlertOnce(alert);
           }
         }
       } catch {}
@@ -355,7 +362,6 @@ export const CodePushService = {
 
   // Real-time listener for Testing Console Push Notifications
   startLivePushNotificationListener(): () => void {
-    const shownPushIds = new Set<string>();
     const checkLivePush = async () => {
       try {
         const res = await fetch(CONFIG.serverUrl + '/.netlify/functions/send-push-notification?projectId=' + CONFIG.appId, {
@@ -378,47 +384,47 @@ export const CodePushService = {
               (push.timestamp ? `push_${push.timestamp}` : null) ||
               (push.sentAt ? `push_${push.sentAt}` : null) ||
               (push.createdAt ? `push_${new Date(push.createdAt).getTime()}` : null) ||
+              (push.created_at ? `push_${new Date(push.created_at).getTime()}` : null) ||
               `${push.title || ''}:::${push.body || ''}`;
 
-            const pushTime = push.createdAt
-              ? new Date(push.createdAt).getTime()
-              : push.timestamp
-              ? Number(push.timestamp)
-              : push.sentAt
-              ? new Date(push.sentAt).getTime()
-              : 0;
-
-            // Stale push check: Ignore pushes that were sent before this app session started
-            if (pushTime > 0 && pushTime < appSessionStartTime - 8000) {
-              shownPushIds.add(id);
+            // Check if already shown and persisted on this device across app restarts
+            if (await NotificationDeduplicationService.isPushShown(id)) {
               return;
             }
 
-            if (!shownPushIds.has(id)) {
-              shownPushIds.add(id);
+            const rawTime = push.createdAt || push.created_at || push.timestamp || push.sentAt;
+            const pushTime = rawTime ? new Date(rawTime).getTime() : 0;
+
+            // Stale push check: Ignore pushes that were sent before this app session started
+            if (pushTime > 0 && !isNaN(pushTime) && pushTime < NotificationDeduplicationService.sessionStartTime - 2000) {
+              await NotificationDeduplicationService.markPushShown(id);
+              return;
+            }
+
+            await NotificationDeduplicationService.markPushShown(id);
+
+            try {
+              let displayed = false;
               try {
-                let displayed = false;
-                try {
-                  const PushService = require('./PushNotificationService')?.PushNotificationService;
-                  if (PushService && typeof PushService.displayNativePush === 'function') {
-                    await PushService.displayNativePush({
-                      title: push.title,
-                      body: push.body,
-                      soundTone: push.soundTone,
-                      route: push.deepLink || push.route,
-                      data: { route: push.deepLink || push.route, soundTone: push.soundTone, pushId: id },
-                    });
-                    displayed = true;
-                  }
-                } catch (pushErr) {
-                  console.warn('⚠️ [CodePush] displayNativePush call failed:', pushErr);
+                const PushService = require('./PushNotificationService')?.PushNotificationService;
+                if (PushService && typeof PushService.displayNativePush === 'function') {
+                  await PushService.displayNativePush({
+                    title: push.title,
+                    body: push.body,
+                    soundTone: push.soundTone,
+                    route: push.deepLink || push.route,
+                    data: { route: push.deepLink || push.route, soundTone: push.soundTone, pushId: id },
+                  });
+                  displayed = true;
                 }
-                if (!displayed) {
-                  Alert.alert(push.title || 'Push Notification', push.body || '');
-                }
-              } catch {
+              } catch (pushErr) {
+                console.warn('⚠️ [CodePush] displayNativePush call failed:', pushErr);
+              }
+              if (!displayed) {
                 Alert.alert(push.title || 'Push Notification', push.body || '');
               }
+            } catch {
+              Alert.alert(push.title || 'Push Notification', push.body || '');
             }
           }
         }
