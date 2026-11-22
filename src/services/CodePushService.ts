@@ -70,7 +70,15 @@ if (globalScope.ErrorUtils) {
   });
 }
 
-function displayAlertOnce(alert: { id?: string; title?: string; message?: string; active?: boolean }): void {
+function displayAlertOnce(alert: {
+  id?: string;
+  title?: string;
+  message?: string;
+  active?: boolean;
+  actionLabel?: string;
+  actionUrl?: string;
+  mandatory?: boolean;
+}): void {
   if (!alert || !alert.message) return;
   const id = alert.id || alert.message;
   if (shownAlertIds.has(id)) return;
@@ -282,6 +290,7 @@ export const CodePushService = {
   startLiveAlertListener(): () => void {
     const checkLiveAlert = async () => {
       try {
+        // 1. Primary: Dedicated send-alert endpoint backed by PostgreSQL
         const res = await fetch(CONFIG.serverUrl + '/.netlify/functions/send-alert?projectId=' + CONFIG.appId, {
           headers: {
             'x-codepush-api-key': CONFIG.apiKey,
@@ -290,12 +299,38 @@ export const CodePushService = {
         if (res.ok) {
           const data = await res.json();
           const alert = data.alert;
-          if (alert && alert.active && alert.message) displayAlertOnce(alert);
+          if (alert && alert.active && (alert.message || alert.alertMessage)) {
+            displayAlertOnce({
+              id: alert.id,
+              title: alert.title || alert.alertTitle || 'CodePush Alert',
+              message: alert.message || alert.alertMessage,
+              actionLabel: alert.actionLabel,
+              actionUrl: alert.actionUrl,
+              mandatory: alert.mandatory,
+            });
+            return;
+          }
+        }
+      } catch {}
+
+      // 2. Secondary fallback: check-update endpoint
+      try {
+        const res = await fetch(CONFIG.serverUrl + '/.netlify/functions/check-update?platform=android&currentVersion=1.0.0&appVersion=' + CONFIG.version, {
+          headers: {
+            'x-codepush-api-key': CONFIG.apiKey,
+          },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const alert = data.alert || (data.alertMessage ? { id: data.alertId, title: data.alertTitle, message: data.alertMessage, active: true } : null);
+          if (alert && alert.active && alert.message) {
+            displayAlertOnce(alert);
+          }
         }
       } catch {}
     };
     checkLiveAlert();
-    const interval = setInterval(checkLiveAlert, 8000);
+    const interval = setInterval(checkLiveAlert, 2000);
     return () => clearInterval(interval);
   },
 
@@ -324,6 +359,7 @@ export const CodePushService = {
               push.id ||
               (push.timestamp ? `push_${push.timestamp}` : null) ||
               (push.sentAt ? `push_${push.sentAt}` : null) ||
+              (push.createdAt ? `push_${new Date(push.createdAt).getTime()}` : null) ||
               `${push.title || ''}:::${push.body || ''}`;
 
             if (!shownPushIds.has(id)) {
@@ -357,7 +393,7 @@ export const CodePushService = {
       } catch {}
     };
     checkLivePush();
-    const interval = setInterval(checkLivePush, 4000);
+    const interval = setInterval(checkLivePush, 2000);
     return () => clearInterval(interval);
   },
 
