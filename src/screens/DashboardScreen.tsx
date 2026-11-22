@@ -157,7 +157,7 @@ export const DashboardScreen: React.FC = () => {
             <Text style={styles.logoIcon}>⚡</Text>
           </View>
           <View>
-            <Text style={styles.headerKicker}>GHOSTAPI CONSOLE</Text>
+            <Text style={styles.headerKicker}>Kailasam CONSOLE</Text>
             <Text style={styles.headerTitle}>{CODEPUSH_CONFIG.appName}</Text>
           </View>
         </View>

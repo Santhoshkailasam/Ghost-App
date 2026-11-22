@@ -17,13 +17,11 @@ export const PushNotificationService = {
 
   isPushAlreadyHandled(id?: string | null, title?: string | null, body?: string | null): boolean {
     if (id && handledPushIds.has(id)) return true;
-    if (title && body && handledPushIds.has(`${title}:::${body}`)) return true;
     return false;
   },
 
   markPushHandled(id?: string | null, title?: string | null, body?: string | null): void {
     if (id) handledPushIds.add(id);
-    if (title && body) handledPushIds.add(`${title}:::${body}`);
     if (handledPushIds.size > 100) {
       const first = handledPushIds.values().next().value;
       if (first) handledPushIds.delete(first);
@@ -158,6 +156,18 @@ export const PushNotificationService = {
         ? `codepush_channel_${cleanTone}`
         : 'codepush_high_importance_channel';
 
+      if (Platform.OS === 'android') {
+        try {
+          await notifee.createChannel({
+            id: channelId,
+            name: `CodePush Notifications (${cleanTone})`,
+            importance: AndroidImportance.HIGH,
+            sound: cleanTone !== 'silent' && cleanTone !== 'default' ? cleanTone : undefined,
+            vibration: true,
+          });
+        } catch {}
+      }
+
       await notifee.displayNotification({
         title: payload.title || 'CodePush Notification',
         body: payload.body || 'You have received a new update',
@@ -178,6 +188,10 @@ export const PushNotificationService = {
       });
     } catch (err) {
       console.warn('❌ [PushService] displayNativePush error:', err);
+      try {
+        const { Alert } = require('react-native');
+        Alert.alert(payload.title || 'CodePush Notification', payload.body || 'You have received a new update');
+      } catch {}
     }
   },
 };
