@@ -142,6 +142,7 @@ async function sendTelemetryPing(action: string, version?: string): Promise<void
       action,
       apiKey: CONFIG.apiKey,
       projectId: CONFIG.appId,
+      fcmToken: require('./PushNotificationService')?.PushNotificationService?.fcmToken || undefined,
     };
 
     fetch(CONFIG.serverUrl + '/.netlify/functions/report-status', {

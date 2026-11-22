@@ -4,6 +4,7 @@ import {
   getToken,
   requestPermission,
   onMessage,
+  subscribeToTopic,
   AuthorizationStatus,
   type RemoteMessage,
 } from '@react-native-firebase/messaging';
@@ -15,12 +16,14 @@ export const PushNotificationService = {
   fcmToken: '' as string,
 
   async isPushAlreadyHandled(id?: string | null, title?: string | null, body?: string | null): Promise<boolean> {
-    const key = id || `${title || ''}:::${body || ''}`;
+    const key = id || (title ? `${title}:::${body || ''}` : null);
+    if (!key) return false;
     return NotificationDeduplicationService.isPushShown(key);
   },
 
   async markPushHandled(id?: string | null, title?: string | null, body?: string | null): Promise<void> {
-    const key = id || `${title || ''}:::${body || ''}`;
+    const key = id || (title ? `${title}:::${body || ''}` : null);
+    if (!key) return;
     await NotificationDeduplicationService.markPushShown(key);
   },
 
@@ -69,7 +72,7 @@ export const PushNotificationService = {
         }
       }
 
-      // 3. Obtain Device FCM Token
+      // 3. Obtain Device FCM Token & Subscribe to Broadcast Topics
       let token: string | null = null;
       try {
         token = await getToken(messagingInstance);
@@ -79,6 +82,29 @@ export const PushNotificationService = {
           console.log('📱 [FCM] Device Token for Testing Console:');
           console.log(token);
           console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+          // Subscribe to broadcast topics for instant fleet-wide push
+          try {
+            await subscribeToTopic(messagingInstance, 'all');
+            await subscribeToTopic(messagingInstance, 'app_rCYp1a_mwrdt1u4_ln97h');
+            console.log('✅ [FCM] Subscribed to topics: all, app_rCYp1a_mwrdt1u4_ln97h');
+          } catch (topicErr) {
+            console.warn('⚠️ [FCM] Topic subscription error:', topicErr);
+          }
+
+          // Register device token with backend
+          try {
+            fetch('https://codepushs.netlify.app/.netlify/functions/report-status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                projectId: 'app_rCYp1a_mwrdt1u4_ln97h',
+                platform: Platform.OS,
+                fcmToken: token,
+                action: 'FCM Device Token Registered',
+              }),
+            }).catch(() => {});
+          } catch {}
         }
       } catch (err) {
         console.warn('⚠️ [FCM] Could not obtain FCM token:', err);
@@ -87,10 +113,8 @@ export const PushNotificationService = {
       // 4. Foreground Push Notification Handler
       onMessage(messagingInstance, async (remoteMessage: RemoteMessage) => {
         const pushId = (remoteMessage.data?.pushId as string) || (remoteMessage.data?.id as string) || remoteMessage.messageId;
-        const title = remoteMessage.notification?.title || (remoteMessage.data?.title as string);
-        const body = remoteMessage.notification?.body || (remoteMessage.data?.body as string);
-
-        if (await this.isPushAlreadyHandled(pushId, title, body)) return;
+        const title = remoteMessage.notification?.title || (remoteMessage.data?.title as string) || 'CodePush Notification';
+        const body = remoteMessage.notification?.body || (remoteMessage.data?.body as string) || '';
 
         await this.displayNativePush({
           title,
@@ -134,9 +158,9 @@ export const PushNotificationService = {
     data?: Record<string, any>;
   }): Promise<void> {
     try {
-      const pushId = payload.data?.pushId || payload.data?.id;
-      if (await this.isPushAlreadyHandled(pushId, payload.title, payload.body)) return;
-      await this.markPushHandled(pushId, payload.title, payload.body);
+      const pushId = payload.data?.pushId || payload.data?.id || (payload.title ? `${payload.title}:::${payload.body || ''}` : null);
+      if (pushId && (await this.isPushAlreadyHandled(pushId, payload.title, payload.body))) return;
+      if (pushId) await this.markPushHandled(pushId, payload.title, payload.body);
 
       const rawTone = payload.soundTone || 'default';
       const BUNDLED_TONES = ['crystal_glass', 'electronic_pulse', 'subtle_pop', 'urgent_alarm', 'custom_notification'];

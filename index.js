@@ -15,10 +15,8 @@ try {
   setBackgroundMessageHandler(messagingInstance, async (remoteMessage) => {
     console.log('🌙 [FCM] Background push notification received:', remoteMessage);
     const pushId = remoteMessage.data?.pushId || remoteMessage.data?.id || remoteMessage.messageId;
-    const title = remoteMessage.notification?.title || remoteMessage.data?.title;
-    const body = remoteMessage.notification?.body || remoteMessage.data?.body;
-
-    if (await PushNotificationService.isPushAlreadyHandled(pushId, title, body)) return;
+    const title = remoteMessage.notification?.title || remoteMessage.data?.title || 'CodePush Notification';
+    const body = remoteMessage.notification?.body || remoteMessage.data?.body || '';
 
     await PushNotificationService.displayNativePush({
       title,
