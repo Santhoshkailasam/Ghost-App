@@ -175,7 +175,9 @@ export const PushNotificationService = {
           channelId,
           sound: cleanTone !== 'silent' ? cleanTone : undefined,
           pressAction: { id: 'default' },
-          smallIcon: 'ic_launcher',
+          smallIcon: 'ic_notification',
+          largeIcon: 'ic_launcher',
+          color: '#0284c7',
         },
         ios: {
           sound: cleanTone !== 'silent' ? `${cleanTone}.mp3` : undefined,
