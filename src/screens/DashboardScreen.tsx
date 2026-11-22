@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Image,
 } from 'react-native';
 import { CodePushService, CODEPUSH_CONFIG } from '../services/CodePushService';
 import { PushNotificationService } from '../services/PushNotificationService';
@@ -150,14 +151,16 @@ export const DashboardScreen: React.FC = () => {
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
     >
-      {/* 1. Header Bar */}
+      {/* 1. Header Bar with App Logo */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoIcon}>⚡</Text>
-          </View>
+          <Image
+            source={require('../assets/app_logo.png')}
+            style={styles.headerAppLogo}
+            resizeMode="cover"
+          />
           <View>
-            <Text style={styles.headerKicker}>Kailasam CONSOLE</Text>
+            <Text style={styles.headerKicker}>CODEPUSH FLEET</Text>
             <Text style={styles.headerTitle}>{CODEPUSH_CONFIG.appName}</Text>
           </View>
         </View>
@@ -437,23 +440,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  logoBadge: {
+  headerAppLogo: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: '#4F46E5',
-    justifyContent: 'center',
-    alignItems: 'center',
     marginRight: 12,
-    shadowColor: '#4F46E5',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  logoIcon: {
-    fontSize: 22,
-    color: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   headerKicker: {
     fontSize: 10,
