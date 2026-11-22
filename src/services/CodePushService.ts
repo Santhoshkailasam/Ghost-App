@@ -2,13 +2,16 @@
 import { Platform, Alert, NativeModules } from 'react-native';
 
 const { CodePushNative } = NativeModules;
+declare const require: any;
+
+const globalScope: any = typeof globalThis !== 'undefined' ? globalThis : {};
 
 // Pre-configured with your CodePush project credentials
 export const CODEPUSH_CONFIG = {
   serverUrl: 'https://codepushs.netlify.app',
-  appId: 'app_rCYp1a_mwrat0im_uasn3',
-  apiKey: 'cp_live_rCYp1a_mwraud9f_4qyg17',
-  appName: 'GhostAPI',
+  appId: 'app_rCYp1a_mwrdt1u4_ln97h',
+  apiKey: 'cp_live_rCYp1a_mwrdt8my_d3d3yi',
+  appName: 'Ghost API',
   version: '1.0.0',
 };
 const CONFIG = CODEPUSH_CONFIG;
@@ -36,25 +39,27 @@ const shownAlertIds = new Set<string>();
 // 1. Auto-report crashes to CodePush server
 export async function reportCrashToServer(error: { message: string; stack?: string; version?: string }): Promise<void> {
   try {
-    fetch(`${CONFIG.serverUrl}/.netlify/functions/report-crash?projectId=${CONFIG.appId}`, {
+    fetch(CONFIG.serverUrl + '/.netlify/functions/report-crash?projectId=' + CONFIG.appId, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-codepush-api-key': CONFIG.apiKey,
+      },
       body: JSON.stringify({
         message: error.message,
         stack: error.stack,
         version: error.version || CONFIG.version,
         platform: Platform.OS,
-        device: `${Platform.OS === 'ios' ? 'iPhone' : 'Android'} Device`,
+        device: (Platform.OS === 'ios' ? 'iPhone' : 'Android') + ' Device',
       }),
     }).catch(() => {});
   } catch {}
 }
 
 // 2. Global JS unhandled exception listener
-const globalAny = globalThis as any;
-if (globalAny.ErrorUtils) {
-  const originalHandler = globalAny.ErrorUtils.getGlobalHandler?.();
-  globalAny.ErrorUtils.setGlobalHandler((error: any, isFatal: boolean) => {
+if (globalScope.ErrorUtils) {
+  const originalHandler = globalScope.ErrorUtils.getGlobalHandler?.();
+  globalScope.ErrorUtils.setGlobalHandler((error: any, isFatal: boolean) => {
     reportCrashToServer({
       message: error?.message || 'Unhandled JavaScript Exception',
       stack: error?.stack,
@@ -88,7 +93,7 @@ function detectDeviceCountry(): string {
     if (tz.startsWith('America/Sao_Paulo')) return 'BR';
     if (tz.startsWith('America/Toronto') || tz.startsWith('America/Vancouver')) return 'CA';
 
-    const nav = (globalThis as any).navigator;
+    const nav = (globalScope as any).navigator;
     if (nav && typeof nav.language === 'string') {
       const parts = nav.language.split('-');
       if (parts[1] && parts[1].length === 2) return parts[1].toUpperCase();
@@ -101,7 +106,7 @@ async function sendTelemetryPing(action: string, version?: string): Promise<void
   try {
     const platform = Platform.OS;
     const ping = {
-      id: `ping_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      id: 'ping_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       date: new Date().toISOString(),
       platform,
@@ -114,15 +119,23 @@ async function sendTelemetryPing(action: string, version?: string): Promise<void
       projectId: CONFIG.appId,
     };
 
-    fetch(`${CONFIG.serverUrl}/.netlify/functions/report-status`, {
+    fetch(CONFIG.serverUrl + '/.netlify/functions/report-status', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-codepush-api-key': CONFIG.apiKey,
+      },
       body: JSON.stringify(ping),
     }).catch(() => {});
   } catch {}
 }
 
 export const CodePushService = {
+  // Allow optional dynamic overrides (e.g. from local codepush.json)
+  configure(customConfig: Partial<typeof CONFIG>): void {
+    Object.assign(CONFIG, customConfig);
+  },
+
   // Check for updates & install silently without asking permission
   async checkForUpdates(): Promise<{ success: boolean; message: string; updateAvailable?: boolean; latestVersion?: string }> {
     try {
@@ -136,9 +149,9 @@ export const CodePushService = {
         } catch {}
       }
 
-      console.log(`[CodePush] Checking updates for ${platform} (Active: v${currentVersion})...`);
+      console.log('[CodePush] Checking updates for ' + platform + ' (Active: v' + currentVersion + ')...');
       // Non-blocking telemetry ping
-      sendTelemetryPing(`Mobile app active · Checking update (Active: v${currentVersion})`, currentVersion);
+      sendTelemetryPing('Mobile app active · Checking update (Active: v' + currentVersion + ')', currentVersion);
 
       const queryParams = new URLSearchParams({
         platform,
@@ -149,7 +162,7 @@ export const CodePushService = {
         projectId: CONFIG.appId,
       });
 
-      const response = await fetch(`${CONFIG.serverUrl}/.netlify/functions/check-update?${queryParams.toString()}`, {
+      const response = await fetch(CONFIG.serverUrl + '/.netlify/functions/check-update?' + queryParams.toString(), {
         headers: {
           'x-codepush-api-key': CONFIG.apiKey,
           'Connection': 'keep-alive',
@@ -181,7 +194,7 @@ export const CodePushService = {
 
       // Silent Over-The-Air Install
       if (data.updateAvailable && data.downloadUrl) {
-        console.log(`⚡ [CodePush] New OTA update v${data.latestVersion}. Installing silently...`);
+        console.log('⚡ [CodePush] New OTA update v' + data.latestVersion + '. Installing silently...');
         await this.installUpdateSilently(data.downloadUrl, data.latestVersion);
         return {
           success: true,
@@ -212,6 +225,10 @@ export const CodePushService = {
     }
   },
 
+  isBootWatchdogPassed(): boolean {
+    return bootWatchdogPassed;
+  },
+
   // Arm Boot Watchdog (5-second survival timer)
   startBootWatchdog(): void {
     bootCrashCount++;
@@ -225,10 +242,6 @@ export const CodePushService = {
       bootWatchdogPassed = true;
       console.log('✅ [CodePush Watchdog] App startup verified healthy.');
     }, 5000);
-  },
-
-  isBootWatchdogPassed(): boolean {
-    return bootWatchdogPassed;
   },
 
   // Emergency Rollback: Reverts to factory APK assets
@@ -250,10 +263,10 @@ export const CodePushService = {
 
   async installUpdateSilently(downloadUrl: string, version: string): Promise<void> {
     try {
-      sendTelemetryPing(`Update v${version} downloading OTA bundle package...`, version);
+      sendTelemetryPing('Update v' + version + ' downloading OTA bundle package...', version);
       if (Platform.OS === 'android' && CodePushNative?.downloadAndApplyBundle) {
         await CodePushNative.downloadAndApplyBundle(downloadUrl, version);
-        await sendTelemetryPing(`Update v${version} installed & autorefreshed`, version);
+        await sendTelemetryPing('Update v' + version + ' installed & autorefreshed', version);
         setTimeout(() => {
           CodePushNative.restartApp();
         }, 1200);
@@ -269,7 +282,11 @@ export const CodePushService = {
   startLiveAlertListener(): () => void {
     const checkLiveAlert = async () => {
       try {
-        const res = await fetch(`${CONFIG.serverUrl}/.netlify/functions/send-alert?projectId=${CONFIG.appId}`);
+        const res = await fetch(CONFIG.serverUrl + '/.netlify/functions/send-alert?projectId=' + CONFIG.appId, {
+          headers: {
+            'x-codepush-api-key': CONFIG.apiKey,
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           const alert = data.alert;
@@ -287,7 +304,11 @@ export const CodePushService = {
     const shownPushIds = new Set<string>();
     const checkLivePush = async () => {
       try {
-        const res = await fetch(`${CONFIG.serverUrl}/.netlify/functions/send-push-notification?projectId=${CONFIG.appId}`);
+        const res = await fetch(CONFIG.serverUrl + '/.netlify/functions/send-push-notification?projectId=' + CONFIG.appId, {
+          headers: {
+            'x-codepush-api-key': CONFIG.apiKey,
+          },
+        });
         if (res.ok) {
           const data = await res.json();
           const push = data.notification;
@@ -296,14 +317,25 @@ export const CodePushService = {
             if (!shownPushIds.has(id)) {
               shownPushIds.add(id);
               try {
-                const { PushNotificationService } = require('./PushNotificationService');
-                PushNotificationService.displayNativePush({
-                  title: push.title,
-                  body: push.body,
-                  soundTone: push.soundTone,
-                  route: push.deepLink,
-                  data: { route: push.deepLink, soundTone: push.soundTone, pushId: id },
-                });
+                let displayed = false;
+                if (typeof require !== 'undefined') {
+                  try {
+                    const PushService = require('./PushNotificationService')?.PushNotificationService;
+                    if (PushService && typeof PushService.displayNativePush === 'function') {
+                      PushService.displayNativePush({
+                        title: push.title,
+                        body: push.body,
+                        soundTone: push.soundTone,
+                        route: push.deepLink,
+                        data: { route: push.deepLink, soundTone: push.soundTone, pushId: id },
+                      });
+                      displayed = true;
+                    }
+                  } catch {}
+                }
+                if (!displayed) {
+                  Alert.alert(push.title || 'Push Notification', push.body || '');
+                }
               } catch {
                 Alert.alert(push.title || 'Push Notification', push.body || '');
               }
@@ -319,7 +351,7 @@ export const CodePushService = {
 
   // Zero-Egress P2P Local Mesh Relay (Enterprise fleets & local LAN distribution)
   enableLocalMeshRelay(options?: { isSeed?: boolean; port?: number; ip?: string }): () => void {
-    const peerId = `device_${Platform.OS}_${Math.random().toString(36).substring(2, 8)}`;
+    const peerId = 'device_' + Platform.OS + '_' + Math.random().toString(36).substring(2, 8);
     const port = options?.port || 8443;
     const isSeed = options?.isSeed || false;
 
@@ -332,7 +364,7 @@ export const CodePushService = {
           } catch {}
         }
 
-        await fetch(`${CONFIG.serverUrl}/.netlify/functions/mesh-relay?projectId=${CONFIG.appId}`, {
+        await fetch(CONFIG.serverUrl + '/.netlify/functions/mesh-relay?projectId=' + CONFIG.appId, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
